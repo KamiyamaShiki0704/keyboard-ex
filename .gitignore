@@ -1,0 +1,18 @@
+/target/
+
+# Rust/editor noise
+*.rs.bk
+.idea/
+.vscode/
+
+# Build artifacts
+**/*.dll
+**/*.pdb
+**/*.exe
+**/*.lib
+**/*.exp
+
+# OS files
+Thumbs.db
+Desktop.ini
+

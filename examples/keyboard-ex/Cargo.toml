@@ -1,0 +1,18 @@
+[package]
+name = "keyboard-ex"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+fromsoftware-shared.workspace = true
+eldenring.workspace = true
+windows = { workspace = true, features = [
+    "Win32_UI_Input_XboxController",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[lib]
+crate-type = ["cdylib"]
