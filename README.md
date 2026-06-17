@@ -169,6 +169,12 @@ This repository is a trimmed workspace containing only the crates required by
 - `crates/eldenring`
 - `examples/keyboard-ex`
 
+## Credits
+
+Special thanks to:
+
+- `Vizzo` - The inspiration and creation of the functions come from him, the lua file is from him.
+
 ## License
 
 Licensed under either of:
