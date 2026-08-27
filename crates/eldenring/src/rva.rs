@@ -6,6 +6,7 @@ use windows::core::PCSTR;
 mod bundle;
 mod rva_jp;
 mod rva_ww;
+mod rva_ww_270;
 
 pub use bundle::RvaBundle;
 
@@ -14,6 +15,7 @@ use fromsoftware_shared::game_version::{GameVersion, LANG_ID_EN, LANG_ID_JP};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ERGameVersion {
     Ww262,
+    Ww270,
     Jp2621,
 }
 
@@ -23,6 +25,7 @@ impl GameVersion for ERGameVersion {
     fn from_lang_version(lang_id: u16, version: &str) -> Option<Self> {
         match (lang_id, version) {
             (LANG_ID_EN, "2.6.2.0") => Some(Self::Ww262),
+            (LANG_ID_EN, "2.7.0.0") => Some(Self::Ww270),
             (LANG_ID_JP, "2.6.2.1") => Some(Self::Jp2621),
             _ => None,
         }
@@ -33,6 +36,7 @@ impl ERGameVersion {
     const fn rvas(self) -> RvaBundle {
         match self {
             Self::Ww262 => rva_ww::RVAS,
+            Self::Ww270 => rva_ww_270::RVAS,
             Self::Jp2621 => rva_jp::RVAS,
         }
     }
@@ -52,4 +56,20 @@ pub fn get() -> &'static RvaBundle {
     });
 
     &RVAS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_ww_270_profile() {
+        let rvas = ERGameVersion::from_lang_version(LANG_ID_EN, "2.7.0.0")
+            .expect("WW 2.7.0.0 should be recognized")
+            .rvas();
+
+        assert_eq!(rvas.chr_ins_apply_speffect, 0x3e8dc0);
+        assert_eq!(rvas.chr_ins_remove_speffect, 0x3ee2e0);
+        assert_eq!(rvas.register_task, 0xeb3de0);
+    }
 }

@@ -31,6 +31,17 @@ target\x86_64-pc-windows-msvc\release\keyboard_ex.dll
 - Removes mapped Speffects when input is released or the player/world is not
   available.
 
+## Compatibility
+
+The vendored Elden Ring runtime currently recognizes:
+
+- WW `2.6.2.0`
+- WW `2.7.0.0`
+- JP `2.6.2.1`
+
+The WW `2.7.0.0` profile updates the RVAs used by Keyboard Ex for task
+registration and player Speffect application/removal.
+
 ## Keyboard Speffect Map
 
 ### Letters
@@ -183,4 +194,3 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
-
