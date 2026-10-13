@@ -7,12 +7,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
-fromsoftware-shared.workspace = true
-eldenring.workspace = true
-windows = { workspace = true, features = [
-    "Win32_UI_Input_XboxController",
-    "Win32_UI_WindowsAndMessaging",
-] }
+shikifsrs-runtime.workspace = true
+shikifsrs-elden-ring.workspace = true
+windows.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

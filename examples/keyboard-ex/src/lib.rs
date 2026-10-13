@@ -1,473 +1,148 @@
-use std::time::Duration;
-
-use eldenring::{
-    cs::{CSTaskGroupIndex, CSTaskImp, ChrInsExt, WorldChrMan},
-    fd4::FD4TaskData,
-};
-use fromsoftware_shared::{FromStatic, SharedTaskImpExt};
-use windows::Win32::{
-    System::Threading::GetCurrentProcessId,
-    UI::{
-        Input::{
-            KeyboardAndMouse::GetAsyncKeyState,
-            XboxController::{
-                XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_BACK, XINPUT_GAMEPAD_DPAD_DOWN,
-                XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP,
-                XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_LEFT_THUMB,
-                XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_RIGHT_THUMB, XINPUT_GAMEPAD_START,
-                XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y, XINPUT_STATE, XInputGetState,
-            },
-        },
-        WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
+//! Fixed WW 1.17.1 candidate. Game-runtime equivalence remains unaccepted.
+//! The host retains this DLL from LoadLibrary through installation, then the SDK pins it.
+//! Registration/native allocator phase and every future FrameBegin's effect/PARAM/target
+//! lifetime remain experimental host obligations. No hot unloading is supported.
+#![deny(unsafe_op_in_unsafe_fn)]
+use shikifsrs_elden_ring::{TaskPhase, Ww171File, input_effect_resident::ResidentInputEffectSlot};
+use shikifsrs_runtime::{Result, memory::CurrentProcess};
+use std::{
+    ffi::c_void,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
     },
+    time::Duration,
+};
+use windows::{
+    Win32::System::{
+        Diagnostics::Debug::OutputDebugStringW, LibraryLoader::GetModuleHandleW,
+        Threading::GetCurrentProcessId,
+    },
+    core::PCWSTR,
 };
 
-const XINPUT_SUCCESS: u32 = 0;
-const TRIGGER_THRESHOLD: u8 = 30;
+const EFFECT_NODE_LIMIT: usize = 4096;
+const GROUP_NODE_LIMIT: usize = 4096;
+static INPUT_EFFECTS: ResidentInputEffectSlot = ResidentInputEffectSlot::new();
+// 0=not started, 1=preparing, 2=waiting for FrameBegin, 3=registered, 4=rejected.
+static STARTUP_STATUS: AtomicU32 = AtomicU32::new(0);
 
-#[derive(Clone, Copy)]
-enum Input {
-    Key(i32),
-    GamepadButton(u16),
-    GamepadLeftTrigger,
-    GamepadRightTrigger,
+/// Copies startup status only. It neither polls input nor calls the game.
+#[unsafe(no_mangle)]
+pub extern "system" fn ShikiKeyboardStatus() -> u32 {
+    STARTUP_STATUS.load(Ordering::Acquire)
 }
 
-#[derive(Clone, Copy)]
-struct InputEffect {
-    sp_effect: i32,
-    input: Input,
+/// Explicit notification for a host that has independently established a later lifetime epoch.
+/// 0=accepted/equal, 1=not installed, 2=rejected. Never calls the game or retries installation.
+/// # Safety
+/// The caller serializes a genuine native generation transition against all effect callbacks,
+/// keeps old objects live until those callbacks return, and supplies new graph/PARAM/allocator
+/// guarantees. Numeric increments do not detect scene changes or reconcile abandoned effects.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn ShikiKeyboardNotifyEpoch(epoch: u64) -> u32 {
+    let Some(control) = INPUT_EFFECTS
+        .control()
+        .and_then(|control| control.epoch_control())
+    else {
+        return 1;
+    };
+    // SAFETY: This export requires the same actual lifetime-transition contract as the SDK control.
+    match unsafe { control.request_epoch(epoch) } {
+        Ok(_) => 0,
+        Err(_) => 2,
+    }
 }
 
-const INPUT_EFFECTS: &[InputEffect] = &[
-    InputEffect {
-        sp_effect: 899000,
-        input: Input::Key(0x41),
-    },
-    InputEffect {
-        sp_effect: 899001,
-        input: Input::Key(0x42),
-    },
-    InputEffect {
-        sp_effect: 899002,
-        input: Input::Key(0x43),
-    },
-    InputEffect {
-        sp_effect: 899003,
-        input: Input::Key(0x44),
-    },
-    InputEffect {
-        sp_effect: 899004,
-        input: Input::Key(0x45),
-    },
-    InputEffect {
-        sp_effect: 899005,
-        input: Input::Key(0x46),
-    },
-    InputEffect {
-        sp_effect: 899006,
-        input: Input::Key(0x47),
-    },
-    InputEffect {
-        sp_effect: 899007,
-        input: Input::Key(0x48),
-    },
-    InputEffect {
-        sp_effect: 899008,
-        input: Input::Key(0x49),
-    },
-    InputEffect {
-        sp_effect: 899009,
-        input: Input::Key(0x4A),
-    },
-    InputEffect {
-        sp_effect: 899010,
-        input: Input::Key(0x4B),
-    },
-    InputEffect {
-        sp_effect: 899011,
-        input: Input::Key(0x4C),
-    },
-    InputEffect {
-        sp_effect: 899012,
-        input: Input::Key(0x4D),
-    },
-    InputEffect {
-        sp_effect: 899013,
-        input: Input::Key(0x4E),
-    },
-    InputEffect {
-        sp_effect: 899014,
-        input: Input::Key(0x4F),
-    },
-    InputEffect {
-        sp_effect: 899015,
-        input: Input::Key(0x50),
-    },
-    InputEffect {
-        sp_effect: 899016,
-        input: Input::Key(0x51),
-    },
-    InputEffect {
-        sp_effect: 899017,
-        input: Input::Key(0x52),
-    },
-    InputEffect {
-        sp_effect: 899018,
-        input: Input::Key(0x53),
-    },
-    InputEffect {
-        sp_effect: 899019,
-        input: Input::Key(0x54),
-    },
-    InputEffect {
-        sp_effect: 899020,
-        input: Input::Key(0x55),
-    },
-    InputEffect {
-        sp_effect: 899021,
-        input: Input::Key(0x56),
-    },
-    InputEffect {
-        sp_effect: 899022,
-        input: Input::Key(0x57),
-    },
-    InputEffect {
-        sp_effect: 899023,
-        input: Input::Key(0x58),
-    },
-    InputEffect {
-        sp_effect: 899024,
-        input: Input::Key(0x59),
-    },
-    InputEffect {
-        sp_effect: 899025,
-        input: Input::Key(0x5A),
-    },
-    InputEffect {
-        sp_effect: 899100,
-        input: Input::Key(0x30),
-    },
-    InputEffect {
-        sp_effect: 899101,
-        input: Input::Key(0x31),
-    },
-    InputEffect {
-        sp_effect: 899102,
-        input: Input::Key(0x32),
-    },
-    InputEffect {
-        sp_effect: 899103,
-        input: Input::Key(0x33),
-    },
-    InputEffect {
-        sp_effect: 899104,
-        input: Input::Key(0x34),
-    },
-    InputEffect {
-        sp_effect: 899105,
-        input: Input::Key(0x35),
-    },
-    InputEffect {
-        sp_effect: 899106,
-        input: Input::Key(0x36),
-    },
-    InputEffect {
-        sp_effect: 899107,
-        input: Input::Key(0x37),
-    },
-    InputEffect {
-        sp_effect: 899108,
-        input: Input::Key(0x38),
-    },
-    InputEffect {
-        sp_effect: 899109,
-        input: Input::Key(0x39),
-    },
-    InputEffect {
-        sp_effect: 899200,
-        input: Input::Key(0x25),
-    },
-    InputEffect {
-        sp_effect: 899201,
-        input: Input::Key(0x26),
-    },
-    InputEffect {
-        sp_effect: 899202,
-        input: Input::Key(0x27),
-    },
-    InputEffect {
-        sp_effect: 899203,
-        input: Input::Key(0x28),
-    },
-    InputEffect {
-        sp_effect: 899400,
-        input: Input::Key(0x70),
-    },
-    InputEffect {
-        sp_effect: 899401,
-        input: Input::Key(0x71),
-    },
-    InputEffect {
-        sp_effect: 899402,
-        input: Input::Key(0x72),
-    },
-    InputEffect {
-        sp_effect: 899403,
-        input: Input::Key(0x73),
-    },
-    InputEffect {
-        sp_effect: 899404,
-        input: Input::Key(0x74),
-    },
-    InputEffect {
-        sp_effect: 899405,
-        input: Input::Key(0x75),
-    },
-    InputEffect {
-        sp_effect: 899406,
-        input: Input::Key(0x76),
-    },
-    InputEffect {
-        sp_effect: 899407,
-        input: Input::Key(0x77),
-    },
-    InputEffect {
-        sp_effect: 899408,
-        input: Input::Key(0x78),
-    },
-    InputEffect {
-        sp_effect: 899409,
-        input: Input::Key(0x79),
-    },
-    InputEffect {
-        sp_effect: 899410,
-        input: Input::Key(0x7A),
-    },
-    InputEffect {
-        sp_effect: 899411,
-        input: Input::Key(0x7B),
-    },
-    InputEffect {
-        sp_effect: 899500,
-        input: Input::Key(0x20),
-    },
-    InputEffect {
-        sp_effect: 899501,
-        input: Input::Key(0x0D),
-    },
-    InputEffect {
-        sp_effect: 899502,
-        input: Input::Key(0x1B),
-    },
-    InputEffect {
-        sp_effect: 899503,
-        input: Input::Key(0x08),
-    },
-    InputEffect {
-        sp_effect: 899504,
-        input: Input::Key(0x09),
-    },
-    InputEffect {
-        sp_effect: 899505,
-        input: Input::Key(0x10),
-    },
-    InputEffect {
-        sp_effect: 899506,
-        input: Input::Key(0x11),
-    },
-    InputEffect {
-        sp_effect: 899507,
-        input: Input::Key(0x12),
-    },
-    InputEffect {
-        sp_effect: 899600,
-        input: Input::Key(0xBA),
-    },
-    InputEffect {
-        sp_effect: 899601,
-        input: Input::Key(0xBB),
-    },
-    InputEffect {
-        sp_effect: 899602,
-        input: Input::Key(0xBC),
-    },
-    InputEffect {
-        sp_effect: 899603,
-        input: Input::Key(0xBD),
-    },
-    InputEffect {
-        sp_effect: 899604,
-        input: Input::Key(0xBE),
-    },
-    InputEffect {
-        sp_effect: 899605,
-        input: Input::Key(0xBF),
-    },
-    InputEffect {
-        sp_effect: 899606,
-        input: Input::Key(0xC0),
-    },
-    InputEffect {
-        sp_effect: 899607,
-        input: Input::Key(0xDB),
-    },
-    InputEffect {
-        sp_effect: 899608,
-        input: Input::Key(0xDC),
-    },
-    InputEffect {
-        sp_effect: 899609,
-        input: Input::Key(0xDD),
-    },
-    InputEffect {
-        sp_effect: 899610,
-        input: Input::Key(0xDE),
-    },
-    InputEffect {
-        sp_effect: 899700,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_A.0),
-    },
-    InputEffect {
-        sp_effect: 899701,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_B.0),
-    },
-    InputEffect {
-        sp_effect: 899702,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_X.0),
-    },
-    InputEffect {
-        sp_effect: 899703,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_Y.0),
-    },
-    InputEffect {
-        sp_effect: 899704,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_LEFT_SHOULDER.0),
-    },
-    InputEffect {
-        sp_effect: 899705,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_RIGHT_SHOULDER.0),
-    },
-    InputEffect {
-        sp_effect: 899706,
-        input: Input::GamepadLeftTrigger,
-    },
-    InputEffect {
-        sp_effect: 899707,
-        input: Input::GamepadRightTrigger,
-    },
-    InputEffect {
-        sp_effect: 899708,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_BACK.0),
-    },
-    InputEffect {
-        sp_effect: 899709,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_START.0),
-    },
-    InputEffect {
-        sp_effect: 899710,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_LEFT_THUMB.0),
-    },
-    InputEffect {
-        sp_effect: 899711,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_RIGHT_THUMB.0),
-    },
-    InputEffect {
-        sp_effect: 899712,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_DPAD_UP.0),
-    },
-    InputEffect {
-        sp_effect: 899713,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_DPAD_DOWN.0),
-    },
-    InputEffect {
-        sp_effect: 899714,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_DPAD_LEFT.0),
-    },
-    InputEffect {
-        sp_effect: 899715,
-        input: Input::GamepadButton(XINPUT_GAMEPAD_DPAD_RIGHT.0),
-    },
-];
+fn debug(message: &str) {
+    let message: Vec<u16> = format!("[keyboard-ex/ShikiFSRS] {message}\n")
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    // SAFETY: The owned NUL-terminated UTF-16 buffer lives throughout this synchronous API call.
+    unsafe { OutputDebugStringW(PCWSTR(message.as_ptr())) };
+}
+
+fn frame_begin_ready(file: &Ww171File<'_>, base: u64) -> Result<bool> {
+    let memory = CurrentProcess;
+    let catalog = file.bind(&memory, base)?;
+    let Some(group) = catalog.observe_phase(TaskPhase::FRAME_BEGIN)? else {
+        return Ok(false);
+    };
+    let Some(id) = group.native_group_id() else {
+        return Ok(false);
+    };
+    // Presence is initialization evidence only, never a mutation-phase/teardown barrier.
+    Ok(catalog.registered_group(id, GROUP_NODE_LIMIT)?.is_some())
+}
 
 /// # Safety
-/// Exposed for Windows LoadLibrary. Do not call directly.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn DllMain(_hmodule: usize, reason: u32) -> bool {
-    if reason != 1 {
-        return true;
-    }
-
-    std::thread::spawn(|| {
-        let Ok(cs_task) = CSTaskImp::wait_for_instance(Duration::MAX) else {
-            return;
-        };
-
-        let mut active = vec![false; INPUT_EFFECTS.len()];
-
-        cs_task.run_recurring(
-            move |_: &FD4TaskData| {
-                let focused = is_game_focused();
-                let gamepad = read_gamepad_state();
-
-                let Ok(world_chr_man) = (unsafe { WorldChrMan::instance_mut() }) else {
-                    active.fill(false);
-                    return;
-                };
-
-                let Some(ref mut main_player) = world_chr_man.main_player else {
-                    active.fill(false);
-                    return;
-                };
-
-                for (index, entry) in INPUT_EFFECTS.iter().enumerate() {
-                    let pressed = focused && is_input_down(entry.input, gamepad.as_ref());
-                    if pressed {
-                        main_player.apply_speffect(entry.sp_effect, true);
-                        active[index] = true;
-                    } else if active[index] {
-                        main_player.chr_ins.remove_speffect(entry.sp_effect);
-                        active[index] = false;
-                    }
-                }
-            },
-            CSTaskGroupIndex::FrameBegin,
-        );
-    });
-
-    true
-}
-
-fn is_game_focused() -> bool {
-    unsafe {
-        let foreground = GetForegroundWindow();
-        if foreground.0.is_null() {
-            return false;
+/// The loader host retains this DLL while waiting and provides the supported registration/heap
+/// phase. After install, all resident task obligations in the module header hold to process exit.
+unsafe fn install() -> std::result::Result<(), String> {
+    let path = std::env::current_exe().map_err(|error| format!("executable path: {error}"))?;
+    let bytes: Arc<[u8]> = std::fs::read(path)
+        .map_err(|error| format!("executable read: {error}"))?
+        .into();
+    // Verify file identity before touching any loaded game memory.
+    let file = Ww171File::verify(&bytes).map_err(|error| error.to_string())?;
+    // SAFETY: None requests the current process executable; no borrowed module handle is released.
+    let base = unsafe { GetModuleHandleW(None) }
+        .map_err(|error| error.to_string())?
+        .0 as u64;
+    STARTUP_STATUS.store(2, Ordering::Release);
+    loop {
+        if frame_begin_ready(&file, base).map_err(|error| error.to_string())? {
+            break;
         }
-
-        let mut process_id = 0;
-        GetWindowThreadProcessId(foreground, Some(&mut process_id));
-        process_id == GetCurrentProcessId()
+        std::thread::sleep(Duration::from_millis(50));
     }
-}
-
-fn read_gamepad_state() -> Option<XINPUT_STATE> {
-    let mut state = XINPUT_STATE::default();
-    let result = unsafe { XInputGetState(0, &mut state) };
-    (result == XINPUT_SUCCESS).then_some(state)
-}
-
-fn is_input_down(input: Input, gamepad: Option<&XINPUT_STATE>) -> bool {
-    match input {
-        Input::Key(vk) => unsafe { GetAsyncKeyState(vk) & i16::MIN != 0 },
-        Input::GamepadButton(button) => gamepad
-            .map(|state| state.Gamepad.wButtons.0 & button != 0)
-            .unwrap_or(false),
-        Input::GamepadLeftTrigger => gamepad
-            .map(|state| state.Gamepad.bLeftTrigger > TRIGGER_THRESHOLD)
-            .unwrap_or(false),
-        Input::GamepadRightTrigger => gamepad
-            .map(|state| state.Gamepad.bRightTrigger > TRIGGER_THRESHOLD)
-            .unwrap_or(false),
+    // SAFETY: Standard Win32 query returns the actual current process PID, not game memory.
+    let process_id = unsafe { GetCurrentProcessId() };
+    // SAFETY: Experimental loader/registration contract above plus supported exclusive FrameBegin
+    // graph/effect lifetime. Epoch 1 is the initial generation; known later transitions use the
+    // explicit export. This candidate does not claim to detect identical-identity ABA.
+    let installed = unsafe {
+        INPUT_EFFECTS.install_current_keyboard(bytes, base, 1, EFFECT_NODE_LIMIT, process_id, None)
     }
+    .map_err(|error| error.to_string())?;
+    installed.registration.map_err(|error| {
+        format!(
+            "module pinned at {:#x}; registration failed: {error}",
+            installed.module_handle
+        )
+    })?;
+    STARTUP_STATUS.store(3, Ordering::Release);
+    debug("FrameBegin registered; all 87 mappings enabled; process-resident experimental runtime");
+    Ok(())
 }
+
+/// Windows DLL entry point. Work is deferred to a worker; it never waits under the loader lock.
+/// # Safety
+/// Windows invokes this entry under its DLL-loading ABI. The host retains the DLL until worker
+/// installation pins it, provides native phase/lifetime obligations, and does not hot-unload it.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn DllMain(_module: isize, reason: u32, _reserved: *mut c_void) -> i32 {
+    if reason == 1
+        && STARTUP_STATUS
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        let result = std::thread::Builder::new()
+            .name("keyboard-ex-init".into())
+            .spawn(|| {
+                // SAFETY: Windows loader host contract is propagated from DllMain to this worker.
+                if let Err(error) = unsafe { install() } {
+                    STARTUP_STATUS.store(4, Ordering::Release);
+                    debug(&error);
+                }
+            });
+        if result.is_err() {
+            STARTUP_STATUS.store(4, Ordering::Release);
+        }
+    }
+    1
+}
+
+#[cfg(test)]
+mod tests;
